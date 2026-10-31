@@ -18,6 +18,8 @@ jobs:
   specify:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ready:spec'
     runs-on: ubuntu-latest
+    env:
+      ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
