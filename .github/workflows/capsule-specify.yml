@@ -1,0 +1,61 @@
+# PoC mirror of microsoft/amplifier-bundle-dot-runner .github/workflows/capsule-specify.yml
+# Shape preserved: issues:labeled gate, contents/pull-requests/issues:write,
+# issue body materialized to issue.md and read in full by an LLM that authors
+# .ai/capsule/DEFINITION.verify.sh, which the pipeline executes (capsule.dot
+# redgate: `timeout 900 bash "$CV"` inside a tool_command subprocess that
+# inherits the run-step environment -- loop-pipeline handler tool.py passes
+# env=None).
+name: Capsule Specify (PoC)
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+jobs:
+  specify:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ready:spec'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Materialize the issue as issue_file
+        id: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/capsule-run"
+          gh issue view "${{ github.event.issue.number }}" --repo "${{ github.repository }}" \
+            --json title,body,url,number --jq '.title, .body' > "$RUNNER_TEMP/capsule-run/issue.md"
+          echo "file=$RUNNER_TEMP/capsule-run/issue.md" >> "$GITHUB_OUTPUT"
+
+      - name: "Simulated LLM author node (stand-in for dot-runner + coding-agent)"
+        # The real author node receives issue_file verbatim in its prompt
+        # ("Read the report IN FULL") and writes .ai/capsule/DEFINITION.verify.sh.
+        # Here the text between PAYLOAD markers plays the part of what an
+        # injected model would emit into that script.
+        run: |
+          set -euo pipefail
+          mkdir -p .ai/capsule
+          {
+            echo 'set -euo pipefail'
+            echo '# --- authored from the filer-supplied report ---'
+            awk '/PAYLOAD_BEGIN/{f=1;next}/PAYLOAD_END/{f=0}f' "${{ steps.issue.outputs.file }}" | sed 's/^> //'
+            echo 'echo "defect reproduced: gate is RED at base" >&2'
+            echo 'exit 1'
+          } > .ai/capsule/DEFINITION.verify.sh
+          echo "--- authored gate ---"; cat .ai/capsule/DEFINITION.verify.sh
+
+      - name: "Run capsule.dot (redgate executes the authored gate)"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.POC_ANTHROPIC_KEY }}
+          OPENAI_API_KEY: ${{ secrets.POC_OPENAI_KEY }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+        run: |
+          set -uo pipefail
+          # capsule.dot redgate: timeout 900 bash "$CV" > .ai/verify-red.log 2>&1
+          timeout 900 bash .ai/capsule/DEFINITION.verify.sh || echo "gate exited $? (expected RED)"
